@@ -7,9 +7,6 @@ import (
 )
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
-
 	l, err := net.Listen("tcp", "0.0.0.0:9092")
 	if err != nil {
 		fmt.Println("Failed to bind to port 9092")
@@ -17,9 +14,28 @@ func main() {
 	} else {
 		fmt.Println("Listening on port", l.Addr().String())
 	}
-	_, err = l.Accept()
+	conn, err := l.Accept()
 	if err != nil {
 		fmt.Println("Error accepting connection: ", err.Error())
+		os.Exit(1)
+	}
+
+	defer conn.Close()
+
+	buf := make([]byte, 40)
+	n, err := conn.Read(buf)
+
+	if err != nil {
+		fmt.Println("Could not recieve data from broker")
+		os.Exit(1)
+	}
+
+	fmt.Println("Recieved message length of: ", n)
+
+	_, err = conn.Write([]byte{0, 0, 0, 0, 0, 0, 0, 7})
+
+	if err != nil {
+		fmt.Println("Could not send the correlation id")
 		os.Exit(1)
 	}
 }
