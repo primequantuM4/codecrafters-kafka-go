@@ -9,7 +9,7 @@ import (
 )
 
 func parseData(connection net.Conn) (int32, error) {
-	var length int16
+	var length int32
 	var requestApiKey int16
 	var requestApiVersion int16
 	var correlationId int32
