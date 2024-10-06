@@ -20,6 +20,7 @@ func parseData(connection net.Conn) (int32, error) {
 	}
 
 	newBuffer := buffer[:n]
+	fmt.Println("Byte array is: ", newBuffer)
 	reader := bytes.NewReader(newBuffer)
 
 	binary.Read(reader, binary.BigEndian, &length)
