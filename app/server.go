@@ -8,28 +8,32 @@ import (
 	"os"
 )
 
-func parseData(connection net.Conn) (int32, error) {
-	var length int32
-	var requestApiKey int16
-	var requestApiVersion int16
-	var correlationId int32
+type DataBody struct {
+	length            int32
+	correlationId     int32
+	requestApiVersion int16
+	requestApiKey     int16
+}
+
+func parseData(connection net.Conn) (DataBody, error) {
+	var dataBody DataBody
 
 	buffer := make([]byte, 1024)
 	n, err := connection.Read(buffer)
 	if err != nil {
-		return -1, err
+		return dataBody, err
 	}
 
 	newBuffer := buffer[:n]
 	fmt.Println("Byte array is: ", newBuffer)
 	reader := bytes.NewReader(newBuffer)
 
-	binary.Read(reader, binary.BigEndian, &length)
-	binary.Read(reader, binary.BigEndian, &requestApiKey)
-	binary.Read(reader, binary.BigEndian, &requestApiVersion)
-	binary.Read(reader, binary.BigEndian, &correlationId)
+	binary.Read(reader, binary.BigEndian, &dataBody.length)
+	binary.Read(reader, binary.BigEndian, &dataBody.requestApiKey)
+	binary.Read(reader, binary.BigEndian, &dataBody.requestApiVersion)
+	binary.Read(reader, binary.BigEndian, &dataBody.correlationId)
 
-	return correlationId, nil
+	return dataBody, nil
 }
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:9092")
@@ -48,7 +52,15 @@ func main() {
 	defer conn.Close()
 
 	length := int32(4)
-	corrId, err := parseData(conn)
+	db, err := parseData(conn)
+
+	var errorCode int32
+
+	if db.requestApiVersion > 4 || db.requestApiVersion < 0 {
+		errorCode = 35
+	} else {
+		errorCode = 0
+	}
 
 	buff := new(bytes.Buffer)
 
@@ -57,7 +69,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Recieved correlation id of: ", corrId)
+	fmt.Println("Recieved correlation id of: ", db.correlationId)
 
 	err = binary.Write(buff, binary.BigEndian, length)
 	if err != nil {
@@ -65,12 +77,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = binary.Write(buff, binary.BigEndian, corrId)
+	err = binary.Write(buff, binary.BigEndian, db.correlationId)
 	if err != nil {
 		fmt.Println("Could not convert correlation id to byte array")
 		os.Exit(1)
 	}
 
+	err = binary.Write(buff, binary.BigEndian, errorCode)
+	if err != nil {
+		fmt.Println("Could not validate the error code type")
+		os.Exit(1)
+	}
 	_, err = conn.Write(buff.Bytes())
 
 	if err != nil {
