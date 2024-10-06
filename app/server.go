@@ -52,7 +52,7 @@ func main() {
 
 	defer conn.Close()
 
-	length := int32(4)
+	length := int32(6)
 	db, err := parseData(conn)
 
 	var errorCode int32
