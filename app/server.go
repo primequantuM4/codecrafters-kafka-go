@@ -55,7 +55,7 @@ func main() {
 	length := int32(6)
 	db, err := parseData(conn)
 
-	var errorCode int32
+	errorCode := 35
 
 	if db.requestApiVersion > 4 || db.requestApiVersion < 0 {
 		errorCode = 35
