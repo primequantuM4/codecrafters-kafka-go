@@ -33,6 +33,7 @@ func parseData(connection net.Conn) (DataBody, error) {
 	binary.Read(reader, binary.BigEndian, &dataBody.requestApiVersion)
 	binary.Read(reader, binary.BigEndian, &dataBody.correlationId)
 
+	fmt.Println("Current version is: ", dataBody.requestApiVersion)
 	return dataBody, nil
 }
 func main() {
@@ -59,7 +60,7 @@ func main() {
 	if db.requestApiVersion > 4 || db.requestApiVersion < 0 {
 		errorCode = 35
 	} else {
-		errorCode = 0
+		errorCode = 35
 	}
 
 	buff := new(bytes.Buffer)
