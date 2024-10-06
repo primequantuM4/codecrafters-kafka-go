@@ -1,11 +1,33 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
 )
 
+func parseData(connection net.Conn) (int32, error) {
+	var length int16
+	var requestApiVersion int16
+	var correlationId int32
+
+	buffer := make([]byte, 1024)
+	n, err := connection.Read(buffer)
+	if err != nil {
+		return -1, err
+	}
+
+	newBuffer := buffer[:n]
+	reader := bytes.NewReader(newBuffer)
+
+	binary.Read(reader, binary.BigEndian, &length)
+	binary.Read(reader, binary.BigEndian, &requestApiVersion)
+	binary.Read(reader, binary.BigEndian, &correlationId)
+
+	return correlationId, nil
+}
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:9092")
 	if err != nil {
@@ -22,17 +44,31 @@ func main() {
 
 	defer conn.Close()
 
-	buf := make([]byte, 40)
-	n, err := conn.Read(buf)
+	length := int32(4)
+	corrId, err := parseData(conn)
+
+	buff := new(bytes.Buffer)
 
 	if err != nil {
-		fmt.Println("Could not recieve data from broker")
+		fmt.Println("Could not parse data properly")
 		os.Exit(1)
 	}
 
-	fmt.Println("Recieved message length of: ", n)
+	fmt.Println("Recieved correlation id of: ", corrId)
 
-	_, err = conn.Write([]byte{0, 0, 0, 0, 0, 0, 0, 7})
+	err = binary.Write(buff, binary.BigEndian, length)
+	if err != nil {
+		fmt.Println("Error writing length")
+		os.Exit(1)
+	}
+
+	err = binary.Write(buff, binary.BigEndian, corrId)
+	if err != nil {
+		fmt.Println("Could not convert correlation id to byte array")
+		os.Exit(1)
+	}
+
+	_, err = conn.Write(buff.Bytes())
 
 	if err != nil {
 		fmt.Println("Could not send the correlation id")
