@@ -10,6 +10,7 @@ import (
 
 func parseData(connection net.Conn) (int32, error) {
 	var length int16
+	var requestApiKey int16
 	var requestApiVersion int16
 	var correlationId int32
 
@@ -24,6 +25,7 @@ func parseData(connection net.Conn) (int32, error) {
 	reader := bytes.NewReader(newBuffer)
 
 	binary.Read(reader, binary.BigEndian, &length)
+	binary.Read(reader, binary.BigEndian, &requestApiKey)
 	binary.Read(reader, binary.BigEndian, &requestApiVersion)
 	binary.Read(reader, binary.BigEndian, &correlationId)
 
