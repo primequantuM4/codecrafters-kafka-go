@@ -15,6 +15,17 @@ type DataBody struct {
 	requestApiKey     int16
 }
 
+type ResponseBody struct {
+	length         int32
+	correlationId  int32
+	errorCode      int16
+	numOfApiKeys   int8
+	apiKey         int16
+	minVersion     int16
+	maxVersion     int16
+	throttleTimeMs int32
+}
+
 func parseData(connection net.Conn) (DataBody, error) {
 	var dataBody DataBody
 
@@ -36,6 +47,16 @@ func parseData(connection net.Conn) (DataBody, error) {
 	fmt.Println("Current version is: ", dataBody.requestApiVersion)
 	return dataBody, nil
 }
+
+func writeBytes[T int8 | int16 | int32](resField T, buff *bytes.Buffer) {
+	err := binary.Write(buff, binary.BigEndian, resField)
+	if err != nil {
+		fmt.Println("Error while writing to buffer")
+		os.Exit(1)
+	}
+
+}
+
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:9092")
 	if err != nil {
@@ -52,43 +73,55 @@ func main() {
 
 	defer conn.Close()
 
-	length := int32(6)
 	db, err := parseData(conn)
-
-	errorCode := int16(35)
-
-	if db.requestApiVersion > 4 || db.requestApiVersion < 0 {
-		errorCode = 35
-	} else {
-		errorCode = 35
-	}
-
-	buff := new(bytes.Buffer)
 
 	if err != nil {
 		fmt.Println("Could not parse data properly")
 		os.Exit(1)
 	}
 
-	fmt.Println("Recieved correlation id of: ", db.correlationId)
+	var responseBody ResponseBody
 
-	err = binary.Write(buff, binary.BigEndian, length)
-	if err != nil {
-		fmt.Println("Error writing length")
-		os.Exit(1)
+	responseBody.length = 19
+	responseBody.correlationId = db.correlationId
+
+	if db.requestApiVersion < 0 || db.requestApiVersion > 4 {
+		responseBody.errorCode = 35
+	} else {
+		responseBody.errorCode = 0
+	}
+	responseBody.apiKey = 18
+	responseBody.minVersion = 0
+	responseBody.maxVersion = 4
+	responseBody.numOfApiKeys = 2
+	responseBody.throttleTimeMs = 0
+
+	buff := new(bytes.Buffer)
+
+	if responseBody.errorCode == 35 {
+		writeBytes(int32(6), buff)
+		writeBytes(responseBody.correlationId, buff)
+		writeBytes(responseBody.errorCode, buff)
+
+		conn.Write(buff.Bytes())
+		os.Exit(0)
 	}
 
-	err = binary.Write(buff, binary.BigEndian, db.correlationId)
-	if err != nil {
-		fmt.Println("Could not convert correlation id to byte array")
-		os.Exit(1)
-	}
+	writeBytes(responseBody.length, buff)
+	writeBytes(responseBody.correlationId, buff)
+	writeBytes(responseBody.errorCode, buff)
+	writeBytes(responseBody.numOfApiKeys, buff)
+	writeBytes(responseBody.apiKey, buff)
+	writeBytes(responseBody.minVersion, buff)
+	writeBytes(responseBody.maxVersion, buff)
 
-	err = binary.Write(buff, binary.BigEndian, errorCode)
-	if err != nil {
-		fmt.Println("Could not validate the error code type")
-		os.Exit(1)
-	}
+	// tagged fields
+	writeBytes(int8(0), buff)
+	writeBytes(responseBody.throttleTimeMs, buff)
+	writeBytes(int8(0), buff)
+
+	fmt.Println("Recieved correlation id of: ", responseBody.correlationId)
+
 	_, err = conn.Write(buff.Bytes())
 
 	if err != nil {
