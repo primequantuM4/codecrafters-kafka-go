@@ -57,28 +57,7 @@ func writeBytes[T int8 | int16 | int32](resField T, buff *bytes.Buffer) {
 
 }
 
-func main() {
-	l, err := net.Listen("tcp", "0.0.0.0:9092")
-	if err != nil {
-		fmt.Println("Failed to bind to port 9092")
-		os.Exit(1)
-	} else {
-		fmt.Println("Listening on port", l.Addr().String())
-	}
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
-
-	defer conn.Close()
-
-	db, err := parseData(conn)
-
-	if err != nil {
-		fmt.Println("Could not parse data properly")
-		os.Exit(1)
-	}
+func handleRequest(conn net.Conn, db DataBody) {
 
 	var responseBody ResponseBody
 
@@ -122,10 +101,44 @@ func main() {
 
 	fmt.Println("Recieved correlation id of: ", responseBody.correlationId)
 
-	_, err = conn.Write(buff.Bytes())
+	_, err := conn.Write(buff.Bytes())
 
 	if err != nil {
 		fmt.Println("Could not send the correlation id")
 		os.Exit(1)
 	}
+}
+
+func main() {
+	l, err := net.Listen("tcp", "0.0.0.0:9092")
+	if err != nil {
+		fmt.Println("Failed to bind to port 9092")
+		os.Exit(1)
+	} else {
+		fmt.Println("Listening on port", l.Addr().String())
+	}
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
+
+		fmt.Println("Client connected from: ", conn.RemoteAddr().String())
+		go func(conn net.Conn) {
+			for {
+				db, err := parseData(conn)
+				if err != nil {
+					fmt.Println("Could not read connection")
+					return
+				}
+
+				handleRequest(conn, db)
+				defer conn.Close()
+			}
+
+		}(conn)
+	}
+
 }
