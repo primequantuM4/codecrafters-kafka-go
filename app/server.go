@@ -8,8 +8,14 @@ import (
 	"os"
 )
 
+// ERROR CODE TYPES
 const UNSUPPORTED_VERSION = int16(35)
 const NO_ERROR_CODE = int16(0)
+
+// VERSION TYPES
+const MIN_VERSION = int16(0)
+const MAX_VERSION = int16(16)
+const FETCH_REQUEST_VERSION = int16(16)
 
 const TAG_BUFFER = int8(0)
 
@@ -34,12 +40,46 @@ func (av *ApiVersion) Encode(buff *bytes.Buffer) {
 }
 
 type ResponseBody struct {
-	Length         int32
 	CorrelationId  int32
 	ErrorCode      int16
 	NumOfApiKeys   int8
 	Versions       []ApiVersion
 	ThrottleTimeMs int32
+}
+
+func (rb *ResponseBody) Encode(buff *bytes.Buffer) {
+	writeBytes(rb.CorrelationId, buff)
+	writeBytes(rb.ErrorCode, buff)
+
+	writeBytes(rb.NumOfApiKeys+1, buff)
+
+	for _, version := range rb.Versions {
+		version.Encode(buff)
+	}
+
+	writeBytes(rb.ThrottleTimeMs, buff)
+	writeBytes(TAG_BUFFER, buff)
+}
+
+type FetchResponse struct {
+	CorrelationId  int32
+	ThrottleTimeMs int32
+	ErrorCode      int16
+	SessionId      int32
+	Response       int8
+}
+
+func (fr *FetchResponse) Encode(buff *bytes.Buffer) {
+
+	//Response Header
+	writeBytes(fr.CorrelationId, buff)
+	writeBytes(TAG_BUFFER, buff)
+	//Response Body
+	writeBytes(fr.ThrottleTimeMs, buff)
+	writeBytes(fr.ErrorCode, buff)
+	writeBytes(fr.SessionId, buff)
+	writeBytes(fr.Response, buff)
+	writeBytes(TAG_BUFFER, buff)
 }
 
 func parseData(connection net.Conn) (DataBody, error) {
@@ -81,6 +121,17 @@ func constructResponse(correlationId int32) ResponseBody {
 	return responseBody
 }
 
+func constructFetchResponse(correlationId int32) FetchResponse {
+	fetchResponse := FetchResponse{
+		CorrelationId:  correlationId,
+		ThrottleTimeMs: 0,
+		ErrorCode:      NO_ERROR_CODE,
+		SessionId:      0,
+	}
+
+	return fetchResponse
+}
+
 func sendErrorResponse(conn net.Conn, correlationId int32) {
 	buff := new(bytes.Buffer)
 	responseBody := ResponseBody{
@@ -118,20 +169,9 @@ func writeBytes[T int8 | int16 | int32](resField T, buff *bytes.Buffer) {
 
 func sendSuccessResponse(conn net.Conn, correlationId int32) {
 	responseBody := constructResponse(correlationId)
-
 	buff := new(bytes.Buffer)
 
-	writeBytes(responseBody.CorrelationId, buff)
-	writeBytes(responseBody.ErrorCode, buff)
-
-	writeBytes(responseBody.NumOfApiKeys+1, buff)
-
-	for _, version := range responseBody.Versions {
-		version.Encode(buff)
-	}
-
-	writeBytes(responseBody.ThrottleTimeMs, buff)
-	writeBytes(TAG_BUFFER, buff)
+	responseBody.Encode(buff)
 
 	sentBuffer := addLength(buff)
 	_, err := conn.Write(sentBuffer)
@@ -141,9 +181,30 @@ func sendSuccessResponse(conn net.Conn, correlationId int32) {
 		os.Exit(1)
 	}
 }
+
+func sendFetchResponse(conn net.Conn, correlationId int32) {
+	fetchResponse := constructFetchResponse(correlationId)
+	buff := new(bytes.Buffer)
+
+	fetchResponse.Encode(buff)
+
+	sentBuffer := addLength(buff)
+	_, err := conn.Write(sentBuffer)
+
+	if err != nil {
+		fmt.Println("Could not send the fetch response [", err.Error(), "]")
+		os.Exit(1)
+	}
+}
+
 func handleRequest(conn net.Conn, db DataBody) {
-	if db.RequestApiVersion < 0 || db.RequestApiVersion > 4 {
+	if db.RequestApiVersion < MIN_VERSION || db.RequestApiVersion > MAX_VERSION {
 		sendErrorResponse(conn, db.CorrelationId)
+		return
+	}
+
+	if db.RequestApiVersion == FETCH_REQUEST_VERSION {
+		sendFetchResponse(conn, db.CorrelationId)
 	} else {
 		sendSuccessResponse(conn, db.CorrelationId)
 	}
