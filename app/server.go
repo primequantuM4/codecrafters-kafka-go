@@ -8,22 +8,38 @@ import (
 	"os"
 )
 
+const UNSUPPORTED_VERSION = int16(35)
+const NO_ERROR_CODE = int16(0)
+
+const TAG_BUFFER = int8(0)
+
 type DataBody struct {
-	length            int32
-	correlationId     int32
-	requestApiVersion int16
-	requestApiKey     int16
+	Length            int32
+	RequestApiKey     int16
+	RequestApiVersion int16
+	CorrelationId     int32
+}
+
+type ApiVersion struct {
+	ApiKey     int16
+	MinVersion int16
+	MaxVersion int16
+}
+
+func (av *ApiVersion) Encode(buff *bytes.Buffer) {
+	writeBytes(av.ApiKey, buff)
+	writeBytes(av.MinVersion, buff)
+	writeBytes(av.MaxVersion, buff)
+	writeBytes(TAG_BUFFER, buff)
 }
 
 type ResponseBody struct {
-	length         int32
-	correlationId  int32
-	errorCode      int16
-	numOfApiKeys   int8
-	apiKey         int16
-	minVersion     int16
-	maxVersion     int16
-	throttleTimeMs int32
+	Length         int32
+	CorrelationId  int32
+	ErrorCode      int16
+	NumOfApiKeys   int8
+	Versions       []ApiVersion
+	ThrottleTimeMs int32
 }
 
 func parseData(connection net.Conn) (DataBody, error) {
@@ -39,22 +55,111 @@ func parseData(connection net.Conn) (DataBody, error) {
 	fmt.Println("Byte array is: ", newBuffer)
 	reader := bytes.NewReader(newBuffer)
 
-	binary.Read(reader, binary.BigEndian, &dataBody.length)
-	binary.Read(reader, binary.BigEndian, &dataBody.requestApiKey)
-	binary.Read(reader, binary.BigEndian, &dataBody.requestApiVersion)
-	binary.Read(reader, binary.BigEndian, &dataBody.correlationId)
+	binary.Read(reader, binary.BigEndian, &dataBody.Length)
+	binary.Read(reader, binary.BigEndian, &dataBody.RequestApiKey)
+	binary.Read(reader, binary.BigEndian, &dataBody.RequestApiVersion)
+	binary.Read(reader, binary.BigEndian, &dataBody.CorrelationId)
 
-	fmt.Println("Current version is: ", dataBody.requestApiVersion)
+	fmt.Println("Current version is: ", dataBody.RequestApiVersion)
 	return dataBody, nil
+}
+
+func constructResponse(correlationId int32) ResponseBody {
+	responseBody := ResponseBody{
+		CorrelationId:  correlationId,
+		ErrorCode:      NO_ERROR_CODE,
+		NumOfApiKeys:   2,
+		ThrottleTimeMs: 0,
+	}
+
+	responseBody.Versions = append(
+		responseBody.Versions,
+		ApiVersion{ApiKey: 18, MinVersion: 0, MaxVersion: 4},
+		ApiVersion{ApiKey: 1, MinVersion: 0, MaxVersion: 16},
+	)
+
+	return responseBody
+}
+
+func sendErrorResponse(conn net.Conn, correlationId int32) {
+	buff := new(bytes.Buffer)
+	responseBody := ResponseBody{
+		CorrelationId: correlationId,
+		ErrorCode:     UNSUPPORTED_VERSION,
+	}
+
+	writeBytes(responseBody.CorrelationId, buff)
+	writeBytes(responseBody.ErrorCode, buff)
+
+	sentBuffer := addLength(buff)
+	conn.Write(sentBuffer)
+	os.Exit(0)
+
+}
+
+func addLength(buffer *bytes.Buffer) []byte {
+	newBuffer := new(bytes.Buffer)
+	length := int32(len(buffer.Bytes()))
+
+	writeBytes(length, newBuffer)
+	res := append(newBuffer.Bytes(), buffer.Bytes()...)
+
+	return res
 }
 
 func writeBytes[T int8 | int16 | int32](resField T, buff *bytes.Buffer) {
 	err := binary.Write(buff, binary.BigEndian, resField)
 	if err != nil {
-		fmt.Println("Error while writing to buffer")
+		fmt.Println("Error while writing to buffer [", err.Error(), "]")
 		os.Exit(1)
 	}
 
+}
+
+func sendSuccessResponse(conn net.Conn, correlationId int32) {
+	responseBody := constructResponse(correlationId)
+
+	buff := new(bytes.Buffer)
+
+	writeBytes(responseBody.CorrelationId, buff)
+	writeBytes(responseBody.ErrorCode, buff)
+
+	writeBytes(responseBody.NumOfApiKeys+1, buff)
+
+	for _, version := range responseBody.Versions {
+		version.Encode(buff)
+	}
+
+	writeBytes(responseBody.ThrottleTimeMs, buff)
+	writeBytes(TAG_BUFFER, buff)
+
+	sentBuffer := addLength(buff)
+	_, err := conn.Write(sentBuffer)
+
+	if err != nil {
+		fmt.Println("Could not send the correlation id [", err.Error(), "]")
+		os.Exit(1)
+	}
+}
+func handleRequest(conn net.Conn, db DataBody) {
+	if db.RequestApiVersion < 0 || db.RequestApiVersion > 4 {
+		sendErrorResponse(conn, db.CorrelationId)
+	} else {
+		sendSuccessResponse(conn, db.CorrelationId)
+	}
+
+}
+
+func handleConnection(conn net.Conn) {
+	for {
+		db, err := parseData(conn)
+		if err != nil {
+			fmt.Println("Could not read connection")
+			return
+		}
+
+		handleRequest(conn, db)
+	}
 }
 
 func main() {
@@ -65,67 +170,17 @@ func main() {
 	} else {
 		fmt.Println("Listening on port", l.Addr().String())
 	}
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
+
+	for {
+
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
+
+		fmt.Println("Client connected from: ", conn.RemoteAddr().String())
+		go handleConnection(conn)
 	}
 
-	defer conn.Close()
-
-	db, err := parseData(conn)
-
-	if err != nil {
-		fmt.Println("Could not parse data properly")
-		os.Exit(1)
-	}
-
-	var responseBody ResponseBody
-
-	responseBody.length = 19
-	responseBody.correlationId = db.correlationId
-
-	if db.requestApiVersion < 0 || db.requestApiVersion > 4 {
-		responseBody.errorCode = 35
-	} else {
-		responseBody.errorCode = 0
-	}
-	responseBody.apiKey = 18
-	responseBody.minVersion = 0
-	responseBody.maxVersion = 4
-	responseBody.numOfApiKeys = 2
-	responseBody.throttleTimeMs = 0
-
-	buff := new(bytes.Buffer)
-
-	if responseBody.errorCode == 35 {
-		writeBytes(int32(6), buff)
-		writeBytes(responseBody.correlationId, buff)
-		writeBytes(responseBody.errorCode, buff)
-
-		conn.Write(buff.Bytes())
-		os.Exit(0)
-	}
-
-	writeBytes(responseBody.length, buff)
-	writeBytes(responseBody.correlationId, buff)
-	writeBytes(responseBody.errorCode, buff)
-	writeBytes(responseBody.numOfApiKeys, buff)
-	writeBytes(responseBody.apiKey, buff)
-	writeBytes(responseBody.minVersion, buff)
-	writeBytes(responseBody.maxVersion, buff)
-
-	// tagged fields
-	writeBytes(int8(0), buff)
-	writeBytes(responseBody.throttleTimeMs, buff)
-	writeBytes(int8(0), buff)
-
-	fmt.Println("Recieved correlation id of: ", responseBody.correlationId)
-
-	_, err = conn.Write(buff.Bytes())
-
-	if err != nil {
-		fmt.Println("Could not send the correlation id")
-		os.Exit(1)
-	}
 }
