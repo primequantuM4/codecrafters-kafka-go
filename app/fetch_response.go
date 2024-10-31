@@ -17,6 +17,8 @@ type FetchResponse struct {
 	Responses      []Response
 }
 
+var topics = make(map[uuid.UUID]bool)
+
 func (fr *FetchResponse) Encode(buff *bytes.Buffer) {
 
 	//Response Header
@@ -75,7 +77,9 @@ func (pr *PartitionsResponse) Encode(buff *bytes.Buffer) {
 	}
 
 	writeBytes(pr.PrefferedReadReplica, buff)
-	writeBytes(int8(0), buff)
+	writeBytes(int8(len(pr.Records)+1), buff)
+	writeBytes(pr.Records, buff)
+
 	writeBytes(TAG_BUFFER, buff)
 }
 
@@ -99,13 +103,21 @@ func constructFetchResponse(correlationId int32, fetchRequest FetchRequest) Fetc
 	}
 
 	if fetchRequest.TopicNum-1 > 0 {
+		var errorCode int16
+
+		if fetchRequest.Topics[0].TopicId.String()[14] != '4' {
+			errorCode = UNKNOWN_TOPIC
+		} else {
+			errorCode = NO_ERROR_CODE
+		}
+
 		fetchResponse.Responses = append(fetchResponse.Responses,
 			Response{
 				TopicId: fetchRequest.Topics[0].TopicId,
 				Partitions: []PartitionsResponse{
 					{
 						ParitionIndex:        0,
-						ErrorCode:            UNKNOWN_TOPIC,
+						ErrorCode:            errorCode,
 						HighWaterMark:        0,
 						LastStableOffset:     0,
 						LogStartOffset:       0,
